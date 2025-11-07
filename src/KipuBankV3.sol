@@ -6,6 +6,8 @@ pragma solidity ^0.8.30;
 ///////////////////////*/
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
+import {IUniswapV2i_router02} from "src/UniswapRouterV2.sol";
+
 /*///////////////////////
         Libraries
 ///////////////////////*/
@@ -16,32 +18,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 ///////////////////////*/
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts@1.4.0/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+//import {AggregatorV3Interface} from "../lib/chainlink-evm/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+
 // import "hardhat/console.sol";
-
-/*  Representación del contrato i_router de Uniswap V2, que permite a este 
-contrato llamar a sus funciones externas */
-interface IUniswapV2i_router02 {
-    // Devuelve la dirección del token WETH (Wrapped Ether), esencial para manejar swaps que involucran a ETH
-    function WETH() external pure returns (address);
-   
-
-    /* Ejecuta un swap donde conoces la cantidad exacta de token de entrada (amountIn) y especificas la cantidad mínima a recibir (amountOutMin)*/
-    function swapExactTokensForTokens(
-        uint amountIn,
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external returns (uint[] memory amounts);
-
-    /* Ejecuta un swap donde la entrada es Ether nativo (usando payable) y se especifica la cantidad mínima a recibir (amountOutMin) */
-    function swapExactETHForTokens(
-        uint amountOutMin,
-        address[] calldata path,
-        address to,
-        uint deadline
-    ) external payable returns (uint[] memory amounts);
-}
 
 /**
  * @title KipuBankV2
@@ -258,9 +237,15 @@ contract KipuBank is Ownable {
      *      la función y lo libera (false) después. Revierte si ya está bloqueado
      */
     modifier noRentrancy() {
+        _noRentrancyBefore();
+        _;
+        _noRentrancyAfter();
+    }
+    function _noRentrancyBefore() internal {
         if (s_locked) revert KipuBank_NoReentrancy();
         s_locked = true;
-        _;
+    }
+    function _noRentrancyAfter() internal {
         s_locked = false;
     }
 
@@ -272,10 +257,14 @@ contract KipuBank is Ownable {
      * @param _amount Monto en wei que se desea retirar
      */
     modifier canWithdrawEther(uint256 _amount) {
+        _canWithdrawEther(_amount);
+        _;
+    }
+
+    function _canWithdrawEther(uint256 _amount) internal {
         uint256 userBalance = s_vault[msg.sender][address(0)];
         if (_amount > userBalance) revert KipuBank_InsufficientFunds();
         if (convertEthInUSD(_amount) > i_maxWithdrawAmount) revert KipuBank_ExceedWithdrawAmount();
-        _;
     }
 
     /**
@@ -286,10 +275,14 @@ contract KipuBank is Ownable {
      * @param _amount Monto en unidades base de USDC que se desea retirar
      */
     modifier canWithdrawUSDC(uint256 _amount) {
+        _canWithdrawUSDC(_amount);
+        _;
+    }
+
+    function _canWithdrawUSDC(uint256 _amount) internal {
         uint256 userBalance = s_vault[msg.sender][address(i_usdc)];
         if (_amount > userBalance) revert KipuBank_InsufficientFunds();
         if (_amount > i_maxWithdrawAmount) revert KipuBank_ExceedWithdrawAmount();
-        _;
     }
 
 
@@ -364,6 +357,8 @@ contract KipuBank is Ownable {
         if (block.timestamp - updatedAt > ORACLE_HEARTBEAT) revert KipuBank_StalePrice(true);
         if (answeredInRound < roundId) revert KipuBank_StalePrice(false);
 
+        // Este cast es seguro tras la validación previa
+        // forge-lint: disable-next-line(unsafe-typecast)
         ethUSDPrice_ = uint256(ethUSDPrice);
     }
 

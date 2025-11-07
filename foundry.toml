@@ -4,3 +4,12 @@ out = "out"
 libs = ["lib"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+remappings = [
+             		"@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+"@chainlink/contracts@1.4.0/=lib/chainlink-evm/contracts/",
+"erc4626-tests/=lib/openzeppelin-contracts/lib/erc4626-tests/",
+"forge-std/=lib/forge-std/src/",
+"halmos-cheatcodes/=lib/openzeppelin-contracts/lib/halmos-cheatcodes/src/",
+"openzeppelin-contracts/=lib/openzeppelin-contracts/"
+						 ]
