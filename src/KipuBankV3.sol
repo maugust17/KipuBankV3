@@ -23,7 +23,7 @@ import {AggregatorV3Interface} from "@chainlink/contracts@1.4.0/src/v0.8/shared/
 // import "hardhat/console.sol";
 
 /**
- * @title KipuBankV2
+ * @title KipuBankV3
  * @author maugust
  * @notice Contrato de banco descentralizado multi-token con soporte para ETH y USDC
  * @dev No usar en producción - TP3 de ETHKipu
@@ -76,7 +76,7 @@ contract KipuBank is Ownable {
      * @dev Almacena la dirección del contrato USDC, establecida en el constructor
      *      Utilizada para transferencias seguras mediante SafeERC20
      */
-    IERC20 immutable i_usdc;
+    IERC20 public immutable i_usdc;
 
     /**
      * @notice Contador del número total de depósitos realizados
@@ -525,5 +525,16 @@ contract KipuBank is Ownable {
     function setFeeds(address _feed) external onlyOwner {
         s_feeds = AggregatorV3Interface(_feed);
         emit KipuBank_ChainlinkFeedUpdated(_feed);
+    }
+
+    /**
+     * @notice Función de vista pública para obtener el balance de un usuario para un token específico
+     * @dev Permite acceder al mapping privado s_vault desde contratos externos y tests
+     * @param _user Dirección del usuario cuyo balance se quiere consultar
+     * @param _token Dirección del token (address(0) para ETH, address(i_usdc) para USDC)
+     * @return El balance del usuario para el token especificado
+     */
+    function vaults(address _user, address _token) external view returns (uint256) {
+        return s_vault[_user][_token];
     }
 }
