@@ -401,6 +401,417 @@ Las contribuciones son bienvenidas. Por favor:
 
 - **maugust** - [GitHub](https://github.com/maugust17)
 
+---
+
+## 🚀 Mejoras de KipuBankV3 vs KipuBankV2
+
+Esta sección documenta las mejoras y nuevas funcionalidades implementadas en KipuBankV3 con respecto a la versión anterior (KipuBankV2).
+
+### 📊 Resumen de Mejoras
+
+| Aspecto | KipuBankV2 | KipuBankV3 | Mejora |
+|---------|------------|------------|--------|
+| **Tokens soportados** | ETH + USDC | ETH + USDC + **Cualquier ERC20** | ✅ +∞ tokens |
+| **Integración DEX** | ❌ No | ✅ Uniswap V2 | ✅ Swaps automáticos |
+| **Funciones públicas** | 6 funciones | 7 funciones | ✅ +1 función |
+| **Gestión de errores** | 9 errores custom | 12 errores custom | ✅ +3 errores |
+| **Visibilidad vault** | ❌ Solo interno | ✅ Getter público | ✅ Mejor testing |
+| **Cobertura de tests** | No documentado | 94.57% | ✅ Excelente |
+
+---
+
+### 🆕 Nuevas Funcionalidades
+
+#### 1. **Integración con Uniswap V2 Router**
+
+**V3 implementa:**
+```solidity
+IUniswapV2Router02 public immutable i_router;
+```
+
+**Permite:**
+- Swaps automáticos de tokens ERC20 a USDC
+- Conversión de cualquier token con liquidez en Uniswap V2
+- Integración con el ecosistema DeFi existente
+
+---
+
+#### 2. **Función `depositOtherToken()` - Nueva en V3**
+
+**Firma:**
+```solidity
+function depositOtherToken(uint256 _tokenAmount, address _tokenIn) external
+```
+
+**Capacidades:**
+- ✅ Acepta cualquier token ERC20 con par en Uniswap V2
+- ✅ Convierte automáticamente a USDC
+- ✅ Valida que el token no sea USDC (debe usar `depositUSDC()`)
+- ✅ Valida que el token no sea address(0)
+- ✅ Respeta el bank cap después del swap
+- ✅ Maneja errores de liquidez/path
+
+**Flujo:**
+1. Usuario aprueba el token al contrato
+2. Contrato transfiere tokens del usuario
+3. Contrato aprueba tokens al router de Uniswap
+4. Ejecuta swap: Token → USDC
+5. Valida bank cap con monto real post-swap
+6. Acredita USDC al balance del usuario
+7. Emite evento de depósito
+
+**Ejemplo de uso:**
+```bash
+# Aprobar DAI al contrato
+cast send $DAI_ADDRESS "approve(address,uint256)" $KIPUBANK_ADDRESS 1000000000000000000
+
+# Depositar DAI (se convierte automáticamente a USDC)
+cast send $KIPUBANK_ADDRESS "depositOtherToken(uint256,address)" 1000000000000000000 $DAI_ADDRESS
+```
+
+---
+
+#### 3. **Función `safeSwap()` - Nueva en V3**
+
+**Firma:**
+```solidity
+function safeSwap(
+    uint amountIn,
+    uint amountOutMin,
+    address[] memory path,
+    address to,
+    uint deadline
+) private returns (bool success, uint[] memory amounts)
+```
+
+**Mejora sobre llamada directa:**
+- ✅ **Try-catch**: Captura errores de Uniswap sin revertir todo
+- ✅ **Retorno dual**: `(bool success, uint[] amounts)` para validación
+- ✅ **Path validation**: Detecta cuando no existe liquidez
+- ✅ **Gas eficiente**: Evita múltiples llamadas externas
+
+**Comparación:**
+
+| Enfoque | V2 | V3 |
+|---------|----|----|
+| Swap directo | ❌ No implementado | ❌ Revertería todo |
+| **Try-catch** | ❌ No disponible | ✅ **Implementado** |
+| Error handling | N/A | ✅ Retorna success/failure |
+
+---
+
+#### 4. **Función `vaults()` - Nueva en V3**
+
+**V2:**
+```solidity
+// No hay forma de acceder al mapping s_vault externamente
+mapping(address user => mapping(address token => uint256 amount)) private s_vault;
+```
+
+**V3:**
+```solidity
+function vaults(address _user, address _token) external view returns (uint256) {
+    return s_vault[_user][_token];
+}
+```
+
+**Beneficios:**
+- ✅ Testing mejorado (acceso directo a balances internos)
+- ✅ Frontends pueden consultar balances fácilmente
+- ✅ Auditores pueden verificar estados sin modificar contrato
+- ✅ Compatibilidad con herramientas de análisis
+
+---
+
+### 🔧 Mejoras en Funcionalidades Existentes
+
+#### 5. **Validación de Bank Cap Mejorada**
+
+**V2:**
+```solidity
+modifier exceedBankCap(uint256 _amount) {
+    if (contractBalanceInUSD() + _amount > i_bankCap) {
+        revert KipuBank_ExceedBankCap();
+    }
+    _;
+}
+
+// Usado como:
+function depositEther() external exceedBankCap(msg.value) payable { ... }
+```
+
+**V3:**
+```solidity
+// Validación inline en depositEther
+function depositEther() external payable {
+    if(msg.value == 0) revert KipuBank_NothingToDeposit();
+
+    // Nota: El ETH ya está en el contrato en este punto
+    if(contractBalanceInUSD() > i_bankCap) revert KipuBank_ExceedBankCap();
+
+    s_vault[msg.sender][address(0)] += msg.value;
+    _depositEtherEvent();
+}
+```
+
+**Mejora:**
+- ✅ **Más preciso**: Reconoce que el ETH ya está depositado en funciones `payable`
+- ✅ **Comentarios explicativos**: Documenta el comportamiento
+- ✅ **Validación post-swap**: En `depositOtherToken()` valida con monto real
+
+---
+
+#### 6. **Reentrancy Guard Refactorizado**
+
+**V2:**
+```solidity
+modifier noRentrancy() {
+    if (s_locked) revert KipuBank_NoReentrancy();
+    s_locked = true;
+    _;
+    s_locked = false;
+}
+```
+
+**V3:**
+```solidity
+modifier noRentrancy() {
+    _noRentrancyBefore();
+    _;
+    _noRentrancyAfter();
+}
+
+function _noRentrancyBefore() internal {
+    if (s_locked) revert KipuBank_NoReentrancy();
+    s_locked = true;
+}
+
+function _noRentrancyAfter() internal {
+    s_locked = false;
+}
+```
+
+**Mejora:**
+- ✅ **Modularidad**: Funciones internas reutilizables
+- ✅ **Testing**: Funciones internas pueden ser probadas independientemente
+- ✅ **Flexibilidad**: Permite composición de guards más complejos
+- ✅ **Mejor práctica**: Sigue patrón de OpenZeppelin
+
+---
+
+#### 7. **Errores Custom Adicionales**
+
+**Nuevos en V3:**
+
+```solidity
+// Error cuando se intenta depositar USDC via depositOtherToken
+error KipuBank_USDCMustBeDirectlyDeposited();
+
+// Error cuando el token es address(0)
+error KipuBank_TokenInexistent();
+
+// Error cuando Uniswap no encuentra path de liquidez
+error KipuBank_PathNotFound();
+```
+
+**Mejora:**
+- ✅ **Mensajes claros**: Errores específicos para cada caso
+- ✅ **Debugging facilitado**: Fácil identificar qué salió mal
+- ✅ **UX mejorada**: Frontends pueden dar feedback preciso
+- ✅ **Gas eficiente**: Errores custom vs strings
+
+---
+
+#### 8. **Modificadores `canWithdraw*` Refactorizados**
+
+**V2:**
+```solidity
+modifier canWithdrawEther(uint256 _amount) {
+    uint256 userBalance = s_vault[msg.sender][address(0)];
+    if (_amount > userBalance) revert KipuBank_InsufficientFunds();
+    if (_amount > i_maxWithdrawAmount) revert KipuBank_ExceedWithdrawAmount();
+    _;
+}
+```
+
+**V3:**
+```solidity
+modifier canWithdrawEther(uint256 _amount) {
+    _canWithdrawEther(_amount);
+    _;
+}
+
+function _canWithdrawEther(uint256 _amount) internal {
+    uint256 userBalance = s_vault[msg.sender][address(0)];
+    if (_amount > userBalance) revert KipuBank_InsufficientFunds();
+    if (convertEthInUSD(_amount) > i_maxWithdrawAmount) revert KipuBank_ExceedWithdrawAmount();
+    //   ^^^^^^^^^^^^^^^^^^^ MEJORA: Validación en USD
+}
+```
+
+**Mejoras:**
+- ✅ **Validación en USD**: `convertEthInUSD(_amount)` vs `_amount` directo
+- ✅ **Consistencia**: Límite de retiro en USD para ETH y USDC
+- ✅ **Modularidad**: Funciones internas `_canWithdraw*()` reutilizables
+
+---
+
+#### 9. **Visibilidad de `i_usdc` Mejorada**
+
+**V2:**
+```solidity
+IERC20 immutable i_usdc;  // No public
+```
+
+**V3:**
+```solidity
+IERC20 public immutable i_usdc;  // Public getter automático
+```
+
+**Mejora:**
+- ✅ **Acceso externo**: Frontends/tests pueden obtener dirección USDC
+- ✅ **Transparencia**: Usuarios pueden verificar el token configurado
+- ✅ **Interoperabilidad**: Otros contratos pueden consultar USDC usado
+
+---
+
+### 📈 Mejoras en Testing y Calidad
+
+#### 10. **Suite de Tests Completa**
+
+**Comparación:**
+
+| Aspecto | V2 | V3 |
+|---------|----|----|
+| Tests implementados | No documentado | **68 tests** |
+| Cobertura de líneas | No medido | **94.57%** |
+| Cobertura de funciones | No medido | **100%** |
+| Fuzz testing | No implementado | ✅ 4 funciones |
+| Mocks | No documentado | ✅ 3 mocks completos |
+
+**V3 incluye:**
+- ✅ Tests para `depositOtherToken()` (9 tests)
+- ✅ Tests de integración con Uniswap
+- ✅ Mocks de ERC20, Chainlink, Uniswap
+- ✅ Tests de paths inválidos
+- ✅ Tests de bank cap post-swap
+
+---
+
+### 🔐 Mejoras de Seguridad
+
+#### 11. **Manejo Robusto de Swaps**
+
+**V3 implementa:**
+- ✅ **Try-catch en swaps**: No revierte todo si falla
+- ✅ **Validación de success**: Verifica resultado antes de continuar
+- ✅ **Path validation**: Error específico si no hay liquidez
+- ✅ **Aprobaciones seguras**: `safeIncreaseAllowance()` de SafeERC20
+
+**Código:**
+```solidity
+(bool success, uint[] memory amounts) = safeSwap(...);
+if(!success) revert KipuBank_PathNotFound();
+```
+
+---
+
+#### 12. **Validación Post-Swap del Bank Cap**
+
+**Mejora crítica:**
+```solidity
+// V3: Valida con el monto REAL después del swap
+(bool success, uint[] memory amounts) = safeSwap(...);
+if(!success) revert KipuBank_PathNotFound();
+
+// Usa el monto real obtenido del swap
+if(contractBalanceInUSD() + amounts[amounts.length - 1] > i_bankCap)
+    revert KipuBank_ExceedBankCap();
+```
+
+**Beneficio:**
+- ✅ **Precisión**: Usa cantidad real de USDC obtenida, no estimada
+- ✅ **Seguridad**: Previene bypass del bank cap por slippage
+- ✅ **Correctitud**: Balance validado con valor final
+
+---
+
+### 📋 Comparación de Constructores
+
+**V2:**
+```solidity
+constructor(
+    uint256 _bankCap,
+    uint256 _maxWithdrawAmount,
+    address _feed,
+    address _usdc
+)
+```
+
+**V3:**
+```solidity
+constructor(
+    uint256 _bankCap,
+    uint256 _maxWithdrawAmount,
+    address _feed,
+    address _usdc,
+    address _router  // ← NUEVO PARÁMETRO
+)
+```
+
+**Cambio:**
+- ✅ **Parámetro adicional**: `_router` para Uniswap V2 Router
+- ✅ **Inicialización**: `i_router = IUniswapV2Router02(_router)`
+
+---
+
+### 🎯 Impacto de las Mejoras
+
+#### Para Usuarios:
+- ✅ **Más tokens soportados**: Cualquier ERC20 con liquidez en Uniswap
+- ✅ **Mayor conveniencia**: No necesitan swap manual antes de depositar
+- ✅ **Transparencia**: Pueden verificar balances fácilmente
+
+#### Para Desarrolladores:
+- ✅ **Testing mejorado**: 94.57% cobertura vs no documentado
+- ✅ **Mejor debugging**: Errores específicos y mensajes claros
+- ✅ **Código modular**: Funciones internas reutilizables
+
+#### Para Auditores:
+- ✅ **Documentación completa**: NatSpec en todas las funciones
+- ✅ **Tests exhaustivos**: 68 tests cubren edge cases
+- ✅ **Patrones seguros**: CEI, reentrancy guard, SafeERC20
+
+---
+
+### 📊 Métricas de Calidad
+
+| Métrica | V2 | V3 | Mejora |
+|---------|----|----|--------|
+| Líneas de código | ~440 | ~540 | +23% funcionalidad |
+| Funciones públicas | 6 | 7 | +1 función |
+| Errores custom | 9 | 12 | +33% |
+| Tests documentados | 0 | 68 | ∞ |
+| Cobertura de código | N/A | 94.57% | Excelente |
+| Integraciones externas | 1 (Chainlink) | 2 (Chainlink + Uniswap) | +100% |
+
+---
+
+### 🎓 Conclusión
+
+KipuBankV3 representa una **evolución significativa** sobre V2, agregando:
+
+1. **Funcionalidad DeFi real**: Integración con Uniswap V2 para swaps automáticos
+2. **Soporte multi-token ilimitado**: Cualquier ERC20 con liquidez
+3. **Mejor arquitectura**: Código más modular y testeable
+4. **Seguridad mejorada**: Validaciones post-swap y manejo robusto de errores
+5. **Calidad profesional**: 94.57% cobertura de tests
+6. **Documentación exhaustiva**: NatSpec completo y README detallado
+
+**KipuBankV3 está listo para ser la base de una aplicación DeFi educativa robusta y bien testeada.**
+
+---
+
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT - ver el archivo LICENSE para más detalles.
