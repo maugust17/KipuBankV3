@@ -23,7 +23,7 @@ import {AggregatorV3Interface} from "@chainlink/contracts@1.4.0/src/v0.8/shared/
 // import "hardhat/console.sol";
 
 /**
- * @title KipuBankV2
+ * @title KipuBankV3
  * @author maugust
  * @notice Contrato de banco descentralizado multi-token con soporte para ETH y USDC
  * @dev No usar en producción - TP3 de ETHKipu

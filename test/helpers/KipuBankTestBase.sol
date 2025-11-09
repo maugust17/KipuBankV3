@@ -33,8 +33,8 @@ contract KipuBankTestBase is Test {
     uint256 public constant INITIAL_USDC = 1_000_000 * 1e6; // 1M USDC
     uint256 public constant INITIAL_OTHER_TOKEN = 1_000_000 * 1e18; // 1M tokens
 
-    uint256 public constant BANK_CAP = 100 ether; // Cap por usuario por token
-    uint256 public constant MAX_WITHDRAW_AMOUNT = 5000 * 1e8; // $5000 en formato de 8 decimales
+    uint256 public constant BANK_CAP = 100000 * 1e6; // $100,000 en formato de 6 decimales (USDC)
+    uint256 public constant MAX_WITHDRAW_AMOUNT = 5000 * 1e6; // $5000 en formato de 6 decimales (USDC)
 
     uint256 public constant SMALL_AMOUNT = 0.1 ether;
     uint256 public constant MEDIUM_AMOUNT = 1 ether;
